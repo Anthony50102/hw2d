@@ -6,7 +6,9 @@ import numpy as np
 
 def is_number(value):
     # Check for basic Python numbers, NumPy numbers
-    if isinstance(value, numbers.Number) or np.isscalar(value):
+    if (isinstance(value, numbers.Number) or np.isscalar(value)):
+        if value == 'double' or value == 'single': # Filter out the precision key
+            return False
         return True
     return False
 
@@ -30,6 +32,7 @@ def format_print_dict(
         value_length (int, optional): Length of values reserved for the floating representation. Defaults to 7.
     """
     dictionary = {k: v for k,v in dictionary.items() if is_number(v)}
+    print(dictionary)
     key_lengths = [len(k) for k in dictionary.keys()]
     longest_key_length = max(key_lengths) + 1
     try:

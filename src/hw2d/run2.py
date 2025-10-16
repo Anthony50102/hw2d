@@ -70,6 +70,7 @@ def run(
     kappa_coeff: float = 1.0,
     poisson_bracket_coeff: float = 1.0,
     zonal: bool = False,
+    precision: str = "double",
     # Running
     show_property: str = "gamma_n",
     # Initialization
@@ -172,6 +173,9 @@ def run(
     if show_property not in properties:
         properties += [show_property]
 
+    # Define precision-aware data type
+    float_dtype = np.float32 if precision == "single" else np.float64
+    
     # Define Initializations
     noise = {
         "fourier": lambda y, x: get_fft_noise(
@@ -181,10 +185,10 @@ def run(
             min_wavelength=dx * 12,
             max_wavelength=dx * grid_pts * 100,
             factor=2,
-        ),
-        "sine": lambda y, x: get_2d_sine((y, x), L),
-        "random": lambda y, x: np.random.rand(y, x).astype(np.float64),
-        "normal": lambda y, x: np.random.normal(size=(y, x)).astype(np.float64),
+        ).astype(float_dtype),
+        "sine": lambda y, x: get_2d_sine((y, x), L).astype(float_dtype),
+        "random": lambda y, x: np.random.rand(y, x).astype(float_dtype),
+        "normal": lambda y, x: np.random.normal(size=(y, x)).astype(float_dtype),
     }
     downsample_fnc = fourier_downsample
 
@@ -198,7 +202,8 @@ def run(
         k0=k0,
         poisson_bracket_coeff=poisson_bracket_coeff,
         kappa_coeff=kappa_coeff,
-        zonal=zonal
+        zonal=zonal,
+        precision=precision,
     )
     # Initialize Plasma
     plasma = Namespace(

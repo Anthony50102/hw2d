@@ -34,7 +34,7 @@ from hw2d.utils.namespaces import Namespace
 # NumPy Version
 from hw2d.gradients.numpy_gradients import periodic_laplace_N, periodic_gradient
 from hw2d.poisson_bracket.numpy_arakawa import periodic_arakawa_vec
-from hw2d.poisson_solvers.numpy_fourier_poisson import fourier_poisson_double
+from hw2d.poisson_solvers.numpy_fourier_poisson import fourier_poisson_double, fourier_poisson_single
 from hw2d.physical_properties.numpy_properties import get_DE, get_DU, get_dE_dt, get_dU_dt, get_gamma_n, get_gamma_c
 from hw2d.zonal_transform.numpy_zonal_transform import zonal_transform
 
@@ -181,6 +181,7 @@ class HW:
         zonal: bool = False,
         debug: bool = False,
         TEST_CONSERVATION: bool = True,
+        precision: str = "double",
     ):
         """
         Initialize the Hasegawa-Wakatani (HW) simulation.
@@ -195,12 +196,32 @@ class HW:
             kappa_coeff (float, optional): Coefficient for d/dy phi. Default is 1.
             debug (bool, optional): Flag to enable debugging mode. Default is False.
             TEST_CONSERVATION (bool, optional): Flag to test conservation properties. Default is True.
+            precision (str, optional): Numerical precision, "single" or "double". Default is "double".
         """
-        # Numerical Schemes
-        self.poisson_solver: Callable = fourier_poisson_double
-        self.diffuse_N: Callable = periodic_laplace_N
-        self.poisson_bracket: Callable = periodic_arakawa
-        self.gradient_func: Callable = periodic_gradient
+        # Floating Point Precision
+        if precision not in ("single", "double"):
+            raise ValueError("Precision must be 'single' or 'double'")
+        self.precision = precision
+        self.float_type = np.float32 if precision == "single" else np.float64
+        self.complex_type = np.complex64 if precision == "single" else np.complex128
+
+        # Numerical Schemes (precision-aware)
+        if precision == "single":
+            # Use numpy functions for single precision to avoid numba type conflicts
+            from hw2d.gradients.numpy_gradients import periodic_laplace_N as np_periodic_laplace_N
+            from hw2d.gradients.numpy_gradients import periodic_gradient as np_periodic_gradient
+            from hw2d.poisson_bracket.numpy_arakawa import periodic_arakawa_vec as np_periodic_arakawa
+            
+            self.poisson_solver: Callable = fourier_poisson_single
+            self.diffuse_N: Callable = np_periodic_laplace_N
+            self.poisson_bracket: Callable = np_periodic_arakawa
+            self.gradient_func: Callable = np_periodic_gradient
+        else:
+            # Use numba functions for double precision (default behavior)
+            self.poisson_solver: Callable = fourier_poisson_double
+            self.diffuse_N: Callable = periodic_laplace_N
+            self.poisson_bracket: Callable = periodic_arakawa
+            self.gradient_func: Callable = periodic_gradient
         # Physical Values
         self.N: int = int(N)
         self.c1: float = c1
@@ -216,13 +237,14 @@ class HW:
         # Debug Values
         self.debug: bool = debug
         self.counter: int = 0
-        self.watch_fncs: Tuple[str] = (
+        self.watch_fncs = (
             "full_step",
             "get_phi",
             "diffuse",
             "gradient_2d",
             "poisson_bracket",
         )
+
         self.timings: Dict[str, float] = {k: 0 for k in self.watch_fncs}
         self.calls: Dict[str, int] = {k: 0 for k in self.watch_fncs}
 
@@ -249,9 +271,11 @@ class HW:
         self, plasma: Namespace, dt: float, dx: float, **kwargs
     ) -> Namespace:
         t0 = time.time()
-        y = Namespace(**{k: v for k, v in plasma.items() if k != "phi"})
+        y = Namespace(**{k: self._ensure_precision(v) if isinstance(v, np.ndarray) else v 
+                        for k, v in plasma.items() if k != "phi"})
         if "phi" in plasma:
-            d = dt * self.gradient_2d(**y, phi=plasma["phi"], dt=0, dx=dx, zonal=self.zonal)
+            phi = self._ensure_precision(plasma["phi"])
+            d = dt * self.gradient_2d(**y, phi=phi, dt=0, dx=dx, zonal=self.zonal)
         else:
             d = dt * self.gradient_2d(**y, dt=0, dx=dx, zonal=self.zonal)
         y += d
@@ -264,9 +288,10 @@ class HW:
     def rk4_step(self, plasma: Namespace, dt: float, dx: float, **kwargs) -> Namespace:
         # RK4
         t0 = time.time()
-        yn = Namespace(**{k: v for k, v in plasma.items() if k != "phi"})
+        yn = Namespace(**{k: self._ensure_precision(v) if isinstance(v, np.ndarray) else v 
+                         for k, v in plasma.items() if k != "phi"})
         # pn = self.get_phi(omega=yn.omega, dx=dx)  # TODO: only execute for t=0
-        pn = plasma.phi
+        pn = self._ensure_precision(plasma.phi)
         k1 = dt * self.gradient_2d(**yn, phi=pn, dt=0, dx=dx, zonal=self.zonal)
         y1 = yn + k1 * 0.5
         p1 = self.get_phi(omega=y1.omega, dx=dx)
@@ -302,19 +327,25 @@ class HW:
             )
         return yk1
 
+    def _ensure_precision(self, arr: np.ndarray) -> np.ndarray:
+        """Ensure array has the correct precision for this simulation."""
+        return arr.astype(self.float_type)
+
     def get_phi(self, omega: np.ndarray, dx: float) -> np.ndarray:
         t0 = time.time()
+        omega = self._ensure_precision(omega)
         o_mean = np.mean(omega)
         centered_omega = omega - o_mean
         phi = self.poisson_solver(tensor=centered_omega, dx=dx)
         self.log("get_phi", time.time() - t0)
-        return phi
+        return self._ensure_precision(phi)
 
     def diffuse(self, arr: np.ndarray, dx: float, N: int) -> np.ndarray:
         t0 = time.time()
+        arr = self._ensure_precision(arr)
         arr = self.diffuse_N(arr=arr, dx=dx, N=N)
         self.log("diffuse", time.time() - t0)
-        return arr
+        return self._ensure_precision(arr)
 
     def gradient_2d(
         self,
@@ -322,7 +353,7 @@ class HW:
         omega: np.ndarray,
         dt: float,
         dx: float,
-        phi: np.ndarray or None = None,
+        phi: np.ndarray | None = None,
         zonal: bool = False,
         debug: bool = False,
         **kwargs

@@ -35,6 +35,7 @@ def run(
     c1: float = 1.0,
     kappa_coeff: float = 1.0,
     poisson_bracket_coeff: float = 1.0,
+    precision: str = "double",
     # Initialization
     seed: int or None = None,
     init_type: str = "normal",
@@ -91,6 +92,7 @@ def run(
         c1 (float, optional): Transition scale between hydrodynamic and adiabatic. Suggested values: 0.1, 1, 5. Defaults to 1.0.
         kappa_coeff (float, optional): Coefficient of d/dy phi. Defaults to 1.0.
         poisson_bracket_coeff (float, optional): Coefficient of Poisson bracket [A,B] implemented with Arakawa Scheme. Defaults to 1.0.
+        precision (str, optional): Numerical precision, "single" or "double". Defaults to "double".
         seed (int or None, optional): Seed for random number generation. Defaults to None.
         init_type (str, optional): Initialization method. Choices: 'fourier', 'sine', 'random', 'normal'. Defaults to 'normal'.
         init_scale (float, optional): Scaling factor for initialization. Defaults to 0.01.
@@ -127,6 +129,9 @@ def run(
     if downsample_factor != 1:
         add_last_state = True
 
+    # Define precision-aware data type
+    float_dtype = np.float32 if precision == "single" else np.float64
+    
     # Define Initializations
     noise = {
         "fourier": lambda y, x: get_fft_noise(
@@ -136,10 +141,10 @@ def run(
             min_wavelength=dx * 12,
             max_wavelength=dx * grid_pts * 100,
             factor=2,
-        ),
-        "sine": lambda y, x: get_2d_sine((y, x), L),
-        "random": lambda y, x: np.random.rand(y, x).astype(np.float64),
-        "normal": lambda y, x: np.random.normal(size=(y, x)).astype(np.float64),
+        ).astype(float_dtype),
+        "sine": lambda y, x: get_2d_sine((y, x), L).astype(float_dtype),
+        "random": lambda y, x: np.random.rand(y, x).astype(float_dtype),
+        "normal": lambda y, x: np.random.normal(size=(y, x)).astype(float_dtype),
     }
     downsample_fnc = fourier_downsample
 
@@ -152,6 +157,7 @@ def run(
         k0=k0,
         poisson_bracket_coeff=poisson_bracket_coeff,
         kappa_coeff=kappa_coeff,
+        precision=precision,
     )
     # Initialize Plasma
     plasma = Namespace(
